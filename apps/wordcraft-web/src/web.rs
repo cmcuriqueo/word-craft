@@ -11,11 +11,14 @@ use wordcraft_ui_egui::{Inbox, Services, WordApp};
 const DOC_EXTS: &[&str] = &["docx", "docm", "dotx", "dotm", "doc", "dot", "odt", "rtf", "txt", "md", "html", "htm", "tex", "json", "xml"];
 const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "wmf", "emf"];
 const RECIPIENT_EXTS: &[&str] = &["csv", "tsv", "txt", "xlsx", "xlsm", "ods"];
+mod drive;
 mod font_store;
 const CANVAS_ID: &str = "wordcraft_canvas";
 const LOADING_ID: &str = "wordcraft_loading";
 
 pub fn start() {
+    // So the Drive sign-in popup can open on the click, not after a later script load.
+    drive::preload();
     eframe::WebLogger::init(log::LevelFilter::Info).ok();
     wasm_bindgen_futures::spawn_local(async {
         let Some(document) = web_sys::window().and_then(|w| w.document()) else {
@@ -200,6 +203,7 @@ fn listen_for_pasted_pictures(inbox: Inbox, ctx: egui::Context) -> Result<(), St
 fn services(inbox: Inbox, ctx: egui::Context, dirty: Rc<Cell<bool>>, saves: Rc<PickerSaves>) -> Services {
     let open_inbox = inbox.clone();
     let save_ctx = ctx.clone();
+    let drive = drive::hooks(ctx.clone(), inbox.clone());
     Services {
         open_async: Some(Box::new(move |purpose: &str| {
             let inbox = open_inbox.clone();
@@ -226,7 +230,9 @@ fn services(inbox: Inbox, ctx: egui::Context, dirty: Rc<Cell<bool>>, saves: Rc<P
         pick_save: Some(Box::new(|name: &str| Some(name.to_string()))),
         download: Some(Box::new(move |path: &str, bytes: &[u8]| download(&saves, &save_ctx, path, bytes))),
         print: Some(Box::new(print_pdf)),
-        inbox: Some(inbox),
+        inbox: Some(inbox.clone()),
+        open_drive: Some(drive.open_drive),
+        fetch_drive: Some(drive.fetch_drive),
         on_dirty: Some(Box::new(move |d| dirty.set(d))),
         animations_enabled: Some(animations_enabled()),
         store_font: Some(Box::new(font_store::store)),

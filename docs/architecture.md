@@ -1,6 +1,6 @@
 # WordCraft architecture
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (`proof` is per language: English and Polish; previously major: first committed version; `plan/architecture.md` is local-only) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** trivial (web Open from Google Drive is another byte source for `file.open`; previously minor: `proof` is per language: English and Polish; previously major: first committed version; `plan/architecture.md` is local-only) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
 
 How WordCraft is built today (origin/main `40c5d51`). The longer design notes in
 `plan/architecture.md` are gitignored and local to the original author's machine; this file is the
@@ -31,12 +31,14 @@ winit or rfd.
 | L6 | `ui-egui` | 13.1k | Word-style front end: ribbon, keytips, mini-toolbar, Backstage, canvas, rulers, panes, dialogs, Equation tab, i18n catalogs, themes, control channel, headless `ui_shot` example |
 | apps | `wordcraft` | 1.6k | Desktop app (eframe + wgpu; logging, window geometry, file associations) |
 | apps | `wordcraft-cli` | 0.4k | `convert`, `text`, `inspect`, `run`, `commands`, `parity`, `mcp`, `zotero` |
-| apps | `wordcraft-web` | 0.3k | Browser build (eframe web runner, WebGPU with WebGL2 fallback) |
+| apps | `wordcraft-web` | 0.3k | Browser build (eframe web runner, WebGPU with WebGL2 fallback); Open from Google Drive |
 
 ## Data flow
 
 1. **Open:** `engine::io` picks a reader by extension (`docx`, `docbin`, `formats`, JSON) and
-   produces a `doc::Document`.
+   produces a `doc::Document`. On the web, File › Open › Open from Google Drive is only another
+   source of those bytes: a Google Doc is exported as .docx, an Office or text file is downloaded,
+   and both open through `file.open`.
 2. **Edit:** every user-visible action is a command id run through `Session::run` (ribbon,
    shortcuts, command search, CLI, control channel and MCP all dispatch by id). `Session::run`
    snapshots for undo (blocks are `Arc`-shared, so snapshots are cheap) and catches an escaped
@@ -64,5 +66,6 @@ winit or rfd.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | trivial | Web Open from Google Drive delivers bytes to the existing `file.open` path |
 | 2026-10-10 | minor | `proof`: proofing languages (English, Polish), affix engine, Polish patterns; layout and engine route each run by its language |
 | 2026-10-10 | major | First committed architecture doc, from the crates' sources and `AGENTS.md` |

@@ -5,7 +5,8 @@
 //! directory (output in `dist/web`).
 //!
 //! Differences from the desktop app: no TCP control channel; Open and Insert › Pictures use the
-//! browser file picker (bytes arrive through `Services::inbox`); Save and Export download.
+//! browser file picker (bytes arrive through `Services::inbox`); File › Open › Open from Google
+//! Drive signs in and opens those bytes the same way; Save and Export download.
 //! URL flags: `?webgl` forces WebGL2; `?sample` opens the sample document.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 

@@ -10,6 +10,10 @@
 //! When the host can't show a system dialog at all (a Linux desktop with neither a file chooser
 //! portal nor zenity, #576) it answers with an error, and the app finishes the job in its own
 //! [`file_browser`](crate::file_browser) instead.
+//!
+//! Open from Google Drive is the other Open operation ([`crate::drive`]): it does not pick a
+//! local path. The host delivers the file's bytes through the inbox, and that opens with
+//! `file.open` the same way a browser pick does. [`finish_pick`] remains the path for a local file.
 
 use std::sync::mpsc::{Receiver, TryRecvError};
 
@@ -103,7 +107,7 @@ pub(crate) enum Asked {
 impl WordApp {
     /// Whether a file dialog is open (its answer hasn't arrived yet), the host's or the built-in one.
     pub fn file_dialog_open(&self) -> bool {
-        self.file_dialog.is_some() || self.file_browser_open()
+        self.file_dialog.is_some() || self.file_browser_open() || self.drive_picker.is_some()
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -290,6 +294,12 @@ impl WordApp {
             return;
         }
         let _ = self.ask_file(FileDialogRequest::Open { purpose: "document".into() }, AfterPick::OpenDocument);
+    }
+
+    /// File › Open › Open from Google Drive. The picker lives in [`crate::drive`]; a chosen file
+    /// comes back as bytes and opens through `file.open`, like [`Self::finish_pick`] does for a path.
+    pub(crate) fn open_from_drive(&mut self) -> bool {
+        crate::drive::start(self)
     }
 
     pub(crate) fn pick_picture(&mut self) {
