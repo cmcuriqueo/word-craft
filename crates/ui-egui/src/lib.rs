@@ -45,6 +45,7 @@ pub mod dialogs_review;
 pub mod dialogs_ribbon;
 pub mod dialogs_smart_art;
 pub mod dialogs_templates;
+pub mod drive;
 pub mod equation_tab;
 /// The built-in file browser, for desktops without a system file dialog (#576).
 #[cfg(not(target_arch = "wasm32"))]
@@ -104,8 +105,14 @@ pub struct Services {
     pub file_dialog: Option<Box<dyn Fn(FileDialogRequest) -> std::sync::mpsc::Receiver<FileDialogAnswer>>>,
     /// Web: open a file picker; the file arrives later through `inbox`.
     pub open_async: Option<Box<dyn Fn(&str)>>,
-    /// Web: files (name, bytes) delivered asynchronously (picker, drag and drop).
+    /// Web: files (name, bytes) delivered asynchronously (picker, drag and drop, Google Drive).
     pub inbox: Option<Inbox>,
+    /// Web: start Open from Google Drive. An empty `client_id` uses the host's configured id;
+    /// otherwise it is the id the user typed. The file list (or a request for a client id) arrives
+    /// on the returned channel. Chosen bytes come back through `inbox` and open with `file.open`.
+    pub open_drive: Option<Box<dyn Fn(&str) -> std::sync::mpsc::Receiver<drive::DriveEvent>>>,
+    /// Web: download or export one Drive file chosen in the Open from Google Drive dialog.
+    pub fetch_drive: Option<Box<dyn Fn(drive::DriveRequest)>>,
     /// Web: hand bytes to the browser as a download. An error means no download started (the
     /// browser can't tell the page whether the user then kept the file).
     pub download: Option<Box<dyn Fn(&str, &[u8]) -> Result<(), String>>>,
@@ -428,6 +435,8 @@ pub struct WordApp {
     autosave_path: Option<std::path::PathBuf>,
     /// The file dialog the host is showing, and what its answer is for ([`file_dialogs`]).
     file_dialog: Option<file_dialogs::PendingDialog>,
+    /// File › Open › Open from Google Drive ([`drive`]).
+    pub(crate) drive_picker: Option<drive::Picker>,
     /// The built-in file browser, when it is open, and the folder it showed last (#576).
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) file_browser: file_browser::State,
@@ -515,6 +524,7 @@ impl WordApp {
             font_generation: wordcraft_fonts::FontDb::global().generation(),
             dialog_pick: None,
             file_dialog: None,
+            drive_picker: None,
             #[cfg(not(target_arch = "wasm32"))]
             file_browser: file_browser::State::default(),
             info_editing: None,
@@ -1087,6 +1097,12 @@ impl WordApp {
                 self.open_dialog();
                 json!({})
             }
+            // File › Open › Open from Google Drive. The host signs in and lists files; the chosen
+            // bytes open through `file.open`. No host (desktop): the dialog says it runs on the web.
+            "ui.openFromDrive" => {
+                let started = self.open_from_drive();
+                json!({"started": started})
+            }
             // The built-in file browser (#576), for when the system's file dialog doesn't show up
             // (desktop only): `purpose` is document (default), picture, recipients or save. A system
             // dialog still waiting for an answer is given up as cancelled.
@@ -1366,6 +1382,7 @@ impl WordApp {
         read_aloud::poll(self, ctx);
         self.clear_stale_change_picture();
         let _ = self.poll_file_dialog();
+        drive::poll(self);
         self.drain_inbox();
         self.watch_fonts(ctx);
         self.autosave_tick(now_ms());
@@ -1527,6 +1544,7 @@ impl WordApp {
         }
         content_controls::popup(self, &ctx);
         dialogs::show(self, &ctx);
+        drive::show(self, &ctx);
         #[cfg(not(target_arch = "wasm32"))]
         file_browser::show(self, &ctx);
         colors::show(self, &ctx);
@@ -1569,7 +1587,10 @@ impl WordApp {
             } else if img {
                 self.insert_or_change_picture(json!({"data": wordcraft_engine::cmd::insert::base64_encode(&bytes)}))
             } else {
-                self.run("file.open", json!({"path": name, "data": wordcraft_engine::cmd::insert::base64_encode(&bytes)}))
+                let r = self.run("file.open", json!({"path": name, "data": wordcraft_engine::cmd::insert::base64_encode(&bytes)}));
+                // A Drive download finishes the same way as a browser pick: `file.open` with the bytes.
+                drive::note_opened(self, &r);
+                r
             };
             if r.is_ok() {
                 self.ui.backstage = false;

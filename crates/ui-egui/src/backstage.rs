@@ -278,6 +278,13 @@ fn open_page(app: &mut WordApp, ui: &mut Ui) {
     if ui.button(egui::RichText::new(tl!("Browse…")).font(medium(14.0))).clicked() {
         let _ = app.run("ui.openFileDialog", json!({}));
     }
+    if ui
+        .button(egui::RichText::new(tl!("Open from Google Drive")).font(medium(14.0)))
+        .on_hover_text(tl!("Google Docs are exported as .docx. Word, text and OpenDocument files are downloaded and opened like a local file."))
+        .clicked()
+    {
+        let _ = app.run("ui.openFromDrive", json!({}));
+    }
     // Linux and the BSDs (#576): the system dialog needs a file chooser portal or zenity; when it
     // doesn't show up, WordCraft's own browser is always one click away.
     #[cfg(all(unix, not(target_os = "macos"), not(target_arch = "wasm32")))]
@@ -492,6 +499,23 @@ mod tests {
         assert_eq!((a.session.doc.core.title.as_str(), a.session.doc.core.creator.as_str()), ("ALPHA", ""));
         a.session.run("edit.undo", &json!({})).unwrap();
         assert_eq!(a.session.doc.core.title, "");
+    }
+
+    #[test]
+    fn open_page_offers_google_drive() {
+        let mut a = WordApp::new(wordcraft_engine::Session::new(wordcraft_doc::Document::new()), Services::default());
+        a.run("ui.backstage", json!({"value": true, "page": "open"})).unwrap();
+        let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1440.0, 900.0)).build_ui_state(
+            |ui, app: &mut WordApp| {
+                let ctx = ui.ctx().clone();
+                app.logic(&ctx);
+                app.ui(ui);
+            },
+            a,
+        );
+        h.run_steps(4);
+        assert!(h.query_by_label("Browse…").is_some(), "Open has Browse");
+        assert!(h.query_by_label("Open from Google Drive").is_some(), "Open has Google Drive");
     }
 
     #[test]
