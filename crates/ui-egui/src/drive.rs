@@ -102,6 +102,10 @@ pub(crate) struct Picker {
     phase: Phase,
     files: Vec<DriveFile>,
     selected: Option<usize>,
+    /// Text in the list's search box. It only filters names already loaded; it is not sent to Drive.
+    query: String,
+    /// Ask the search box for the keyboard once, when a fresh list arrives.
+    focus_search: bool,
     client_id: String,
     client_error: Option<&'static str>,
 }
@@ -133,13 +137,31 @@ pub(crate) fn start(app: &mut WordApp) -> bool {
 
 impl Picker {
     fn working(rx: Receiver<DriveEvent>) -> Self {
-        Self { rx, phase: Phase::Working(SIGNING_IN), files: Vec::new(), selected: None, client_id: String::new(), client_error: None }
+        Self {
+            rx,
+            phase: Phase::Working(SIGNING_IN),
+            files: Vec::new(),
+            selected: None,
+            query: String::new(),
+            focus_search: false,
+            client_id: String::new(),
+            client_error: None,
+        }
     }
 
     fn explain(message: &str) -> Self {
         let (tx, rx) = channel();
         drop(tx);
-        Self { rx, phase: Phase::Error(message.to_string()), files: Vec::new(), selected: None, client_id: String::new(), client_error: None }
+        Self {
+            rx,
+            phase: Phase::Error(message.to_string()),
+            files: Vec::new(),
+            selected: None,
+            query: String::new(),
+            focus_search: false,
+            client_id: String::new(),
+            client_error: None,
+        }
     }
 }
 
@@ -436,6 +458,8 @@ fn apply(app: &mut WordApp, event: DriveEvent) {
         DriveEvent::Files(files) => {
             picker.files = sanitize_files(files);
             picker.selected = None;
+            picker.query.clear();
+            picker.focus_search = true;
             picker.phase = Phase::Choose;
         }
         DriveEvent::Error(msg) => picker.phase = Phase::Error(clean_message(&msg)),
@@ -564,34 +588,104 @@ fn client_form(app: &mut WordApp, ui: &mut egui::Ui, picker: &mut Picker) -> boo
 }
 
 fn file_list(app: &mut WordApp, ui: &mut egui::Ui, picker: &mut Picker) -> bool {
-    let rows: Vec<(String, String)> = picker.files.iter().map(|f| (f.name.clone(), f.mime.clone())).collect();
-    if rows.is_empty() {
+    if picker.files.is_empty() {
         ui.label(tl!("No documents in Google Drive match the files WordCraft can open."));
         ui.add_space(8.0);
         return cancel_row(ui);
     }
+    let search = ui.add(egui::TextEdit::singleline(&mut picker.query).hint_text(tl!("Search files")).desired_width(ui.available_width()));
+    if picker.focus_search {
+        search.request_focus();
+        picker.focus_search = false;
+    }
+    cap_query(&mut picker.query);
+    // Escape clears the search and keeps the chosen row. A second Escape closes the dialog.
+    let clearing_search = escape(ui) && !picker.query.is_empty();
+    if clearing_search {
+        picker.query.clear();
+    }
+    let shown = matching_indices(&picker.files, &picker.query);
+    if picker.selected.is_some_and(|i| !shown.contains(&i)) {
+        picker.selected = None;
+    }
+    ui.add_space(6.0);
     let mut pick = picker.selected;
     let mut open_now = None;
-    egui::ScrollArea::vertical().id_salt("drive_file_list").max_height(280.0).show(ui, |ui| {
-        for (i, (name, mime)) in rows.iter().enumerate() {
-            let label = format!("{}  ·  {}", display_name(name), tl!(kind_label(mime)));
-            let resp = ui.selectable_label(pick == Some(i), label);
-            if resp.double_clicked() {
-                open_now = Some(i);
-            } else if resp.clicked() {
-                pick = Some(i);
+    if shown.is_empty() {
+        ui.label(tl!("No documents match that search."));
+    } else {
+        egui::ScrollArea::vertical().id_salt("drive_file_list").max_height(280.0).show(ui, |ui| {
+            for i in &shown {
+                let Some(file) = picker.files.get(*i) else { continue };
+                let label = format!("{}  ·  {}", display_name(&file.name), tl!(kind_label(&file.mime)));
+                let resp = ui.selectable_label(pick == Some(*i), label);
+                if resp.double_clicked() {
+                    open_now = Some(*i);
+                } else if resp.clicked() {
+                    pick = Some(*i);
+                }
             }
-        }
-    });
+        });
+    }
     picker.selected = pick;
     let (ok, cancel) = action_row(ui, tl!("Open"), pick.is_some());
+    if clearing_search {
+        return false;
+    }
     if cancel || escape(ui) {
         return true;
     }
-    if let Some(index) = open_now.or(if ok || enter(ui) { pick } else { None }) {
+    let search_enter = search.has_focus() && enter(ui);
+    let index = open_now.or(if search_enter {
+        if shown.len() == 1 { shown.first().copied() } else { pick.filter(|i| shown.contains(i)) }
+    } else if ok || enter(ui) {
+        pick
+    } else {
+        None
+    });
+    if let Some(index) = index {
         open_file(app, picker, index);
     }
     false
+}
+
+/// Names in the loaded list whose text contains `query`. The index is into `files`, so a choice
+/// still opens that file after the list is filtered. Matching ignores case and common accents.
+fn matching_indices(files: &[DriveFile], query: &str) -> Vec<usize> {
+    files.iter().enumerate().filter(|(_, file)| name_matches(&file.name, query)).map(|(i, _)| i).collect()
+}
+
+fn name_matches(name: &str, query: &str) -> bool {
+    let needle = search_needle(query);
+    needle.is_empty() || fold_name(name).contains(&needle)
+}
+
+fn search_needle(query: &str) -> String {
+    fold_name(&query.chars().filter(|c| !c.is_control()).take(80).collect::<String>()).trim().to_string()
+}
+
+fn cap_query(query: &mut String) {
+    if query.chars().count() > 80 {
+        let end = query.char_indices().nth(80).map(|(i, _)| i).unwrap_or(query.len());
+        query.truncate(end);
+    }
+}
+
+fn fold_name(s: &str) -> String {
+    s.to_lowercase().chars().map(fold_char).collect()
+}
+
+fn fold_char(c: char) -> char {
+    match c {
+        'á' | 'à' | 'ä' | 'â' | 'ã' | 'å' => 'a',
+        'é' | 'è' | 'ë' | 'ê' => 'e',
+        'í' | 'ì' | 'ï' | 'î' => 'i',
+        'ó' | 'ò' | 'ö' | 'ô' | 'õ' => 'o',
+        'ú' | 'ù' | 'ü' | 'û' => 'u',
+        'ñ' => 'n',
+        'ç' => 'c',
+        other => other,
+    }
 }
 
 fn error_view(ui: &mut egui::Ui, picker: &mut Picker) -> bool {
@@ -770,6 +864,16 @@ mod tests {
         let msg = api_error_message(&body).unwrap();
         assert!(msg.chars().count() <= 180 && !msg.contains('\n'));
         assert!(api_error_message("nope").is_none());
+        let files = vec![
+            DriveFile { id: "a".into(), name: "Información".into(), mime: "text/plain".into() },
+            DriveFile { id: "b".into(), name: "Budget".into(), mime: EXPORT_DOCX.into() },
+        ];
+        assert_eq!(matching_indices(&files, ""), vec![0, 1]);
+        assert_eq!(matching_indices(&files, "  INFORMACION "), vec![0]);
+        assert_eq!(matching_indices(&files, "bud"), vec![1]);
+        assert!(matching_indices(&files, "slides").is_empty());
+        assert!(name_matches("Notes", "  NO\u{0001}tes  "));
+        assert_eq!(search_needle(&format!("{}extra", "a".repeat(100))).chars().count(), 80);
         assert!(accept_fetch(&DriveRequest { id: "abc".into(), name: "Notes.docx".into(), export_docx: true }));
         assert!(!accept_fetch(&DriveRequest { id: "a/b".into(), name: "Notes.docx".into(), export_docx: true }));
         assert!(!accept_fetch(&DriveRequest { id: "abc".into(), name: "Notes.txt".into(), export_docx: true }));
