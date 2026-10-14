@@ -23,6 +23,12 @@ eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "
 egui = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
+sha2 = { workspace = true }
+base64 = { workspace = true }
+# Open the system browser for Google sign-in (xdg-open, open, or the Windows shell).
+open = "5"
+# Drive's HTTPS calls. rustls, so the desktop build does not need OpenSSL.
+ureq = { version = "2.12.1", default-features = false, features = ["tls"] }
 
 [build-dependencies]
 # Icon + VERSIONINFO for wordcraft.exe; build.rs only uses it when the target is Windows.
@@ -54,8 +60,6 @@ zbus = { version = "5", default-features = false, features = ["async-io", "block
 wl-clipboard-rs = "0.9"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-# The upstream default-apps button opens Windows Settings; printing uses craft-print instead.
-open = "5"
 # The system's Animation effects setting (Settings › Accessibility › Visual effects), read through
 # the Windows Runtime's UISettings: a safe API, where the Win32 call needs unsafe, which our
 # workspace forbids. Already in the build through wgpu and AccessKit, at this version; this adds

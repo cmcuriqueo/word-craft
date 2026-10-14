@@ -46,7 +46,7 @@ struct DriveHost {
 }
 
 pub struct Hooks {
-    pub open_drive: Box<dyn Fn(&str) -> Receiver<DriveEvent>>,
+    pub open_drive: Box<dyn Fn(drive::DriveLogin) -> Receiver<DriveEvent>>,
     pub fetch_drive: Box<dyn Fn(DriveRequest)>,
 }
 
@@ -81,13 +81,14 @@ pub fn hooks(ctx: egui::Context, inbox: Inbox) -> Hooks {
     });
     let open_host = host.clone();
     let fetch_inner = host.inner.clone();
-    Hooks { open_drive: Box::new(move |id| open(&open_host, id)), fetch_drive: Box::new(move |req| fetch(fetch_inner.clone(), req)) }
+    Hooks { open_drive: Box::new(move |login| open(&open_host, login)), fetch_drive: Box::new(move |req| fetch(fetch_inner.clone(), req)) }
 }
 
-fn open(host: &Rc<DriveHost>, client_id: &str) -> Receiver<DriveEvent> {
+fn open(host: &Rc<DriveHost>, login: drive::DriveLogin) -> Receiver<DriveEvent> {
     let (tx, rx) = std::sync::mpsc::channel();
     host.inner.borrow_mut().tx = Some(tx.clone());
-    match resolve_client_id(client_id) {
+    // The page sign-in does not use a desktop client secret.
+    match resolve_client_id(&login.client_id) {
         ClientId::Missing => send(&host.inner, DriveEvent::NeedClientId),
         ClientId::Invalid => send(&host.inner, DriveEvent::Error("That doesn't look like a Google OAuth client ID.".into())),
         ClientId::Id(id) => {

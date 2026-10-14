@@ -1,0 +1,8 @@
+El cliente web que ya usaste con trunk serve no sirve para esto. En Google Cloud crea un cliente nuevo de tipo Desktop app. Copia el Client ID y el Client secret. No pegues el secreto en el chat.
+
+Para probarlo:
+
+
+git fetch origin
+git checkout cursor/desktop-google-drive-a67f
+cargo run --release -p wordcraft

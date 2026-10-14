@@ -107,11 +107,12 @@ pub struct Services {
     pub open_async: Option<Box<dyn Fn(&str)>>,
     /// Web: files (name, bytes) delivered asynchronously (picker, drag and drop, Google Drive).
     pub inbox: Option<Inbox>,
-    /// Web: start Open from Google Drive. An empty `client_id` uses the host's configured id;
-    /// otherwise it is the id the user typed. The file list (or a request for a client id) arrives
-    /// on the returned channel. Chosen bytes come back through `inbox` and open with `file.open`.
-    pub open_drive: Option<Box<dyn Fn(&str) -> std::sync::mpsc::Receiver<drive::DriveEvent>>>,
-    /// Web: download or export one Drive file chosen in the Open from Google Drive dialog.
+    /// Start Open from Google Drive. An empty client id uses the host's saved id. The file list
+    /// (or a request for a client id) arrives on the returned channel. Chosen bytes come back
+    /// through `inbox` and open with `file.open`. The web app signs in inside the page; the
+    /// desktop app opens the system browser.
+    pub open_drive: Option<Box<dyn Fn(drive::DriveLogin) -> std::sync::mpsc::Receiver<drive::DriveEvent>>>,
+    /// Download or export one Drive file chosen in the Open from Google Drive dialog.
     pub fetch_drive: Option<Box<dyn Fn(drive::DriveRequest)>>,
     /// Web: hand bytes to the browser as a download. An error means no download started (the
     /// browser can't tell the page whether the user then kept the file).

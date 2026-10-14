@@ -15,6 +15,7 @@ mod apple_events;
 mod clipboard;
 mod control_server;
 mod default_apps;
+mod drive;
 mod file_dialogs;
 #[cfg(any(target_os = "windows", test))]
 mod graphics;
@@ -201,8 +202,11 @@ fn save_prefs(app: &WordApp) {
 /// Native file dialogs, shown without blocking the window (`file_dialogs`, #94), File › Print
 /// through the system spooler (`print`), the system clipboard's text, formatted copies,
 /// pictures and format names (`clipboard`, #45, #584, #687, #833), the system's animation setting
-/// (`animations`), and making WordCraft the default app for Word documents (`default_apps`, #295).
+/// (`animations`), making WordCraft the default app for Word documents (`default_apps`, #295),
+/// and Open from Google Drive through the system browser (`drive`).
 fn services(file_dialog: file_dialogs::Hook, ctx: &egui::Context) -> Services {
+    let inbox: wordcraft_ui_egui::Inbox = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let drive = drive::hooks(ctx.clone(), inbox.clone(), wordcraft_control_key::settings_dir());
     Services {
         file_dialog: Some(file_dialog),
         printers: Some(print::discover()),
@@ -214,6 +218,9 @@ fn services(file_dialog: file_dialogs::Hook, ctx: &egui::Context) -> Services {
         clipboard_html: Some(Box::new(clipboard::html)),
         clipboard_rtf: Some(Box::new(clipboard::rtf)),
         clipboard_formats: Some(Box::new(clipboard::formats)),
+        inbox: Some(inbox),
+        open_drive: Some(drive.open_drive),
+        fetch_drive: Some(drive.fetch_drive),
         ..Default::default()
     }
 }
