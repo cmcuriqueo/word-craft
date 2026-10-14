@@ -6,8 +6,8 @@
 //! OpenDocument file. Those bytes arrive on the inbox and open through `file.open`, the same
 //! command a local pick uses ([`crate::WordApp::drain_inbox`]). Saving the document is unchanged.
 //!
-//! The web app does the OAuth and the downloads. Desktop builds show why the button is quiet
-//! there: this phase has no desktop sign-in.
+//! The web app signs in with Google Identity Services. The desktop app opens the system browser
+//! and catches Google's return on this computer. Either way the bytes open through `file.open`.
 
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 
@@ -78,6 +78,14 @@ pub struct OpenPlan {
     pub export_docx: bool,
 }
 
+/// What the user typed to sign in. The secret is empty on the web. The desktop app needs both
+/// for a Desktop OAuth client; it is not a document and it is not logged.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DriveLogin {
+    pub client_id: String,
+    pub client_secret: String,
+}
+
 /// News from the host while the picker is open.
 #[derive(Clone, Debug)]
 pub enum DriveEvent {
@@ -107,6 +115,7 @@ pub(crate) struct Picker {
     /// Ask the search box for the keyboard once, when a fresh list arrives.
     focus_search: bool,
     client_id: String,
+    client_secret: String,
     client_error: Option<&'static str>,
 }
 
@@ -120,8 +129,8 @@ enum Phase {
 
 /// File › Open › Open from Google Drive, and `ui.openFromDrive` ([`crate::file_dialogs`]).
 ///
-/// Returns whether the host started sign-in. With no host (the desktop app) the dialog explains
-/// that this runs in the web app.
+/// Returns whether the host started sign-in. With no host the dialog explains that Drive is not
+/// connected.
 pub(crate) fn start(app: &mut WordApp) -> bool {
     if app.file_dialog_open() {
         app.status(tl!("A file dialog is already open."));
@@ -131,7 +140,7 @@ pub(crate) fn start(app: &mut WordApp) -> bool {
         app.drive_picker = Some(Picker::explain("Open from Google Drive is available in the web app."));
         return false;
     };
-    app.drive_picker = Some(Picker::working(start("")));
+    app.drive_picker = Some(Picker::working(start(DriveLogin::default())));
     true
 }
 
@@ -145,6 +154,7 @@ impl Picker {
             query: String::new(),
             focus_search: false,
             client_id: String::new(),
+            client_secret: String::new(),
             client_error: None,
         }
     }
@@ -160,9 +170,17 @@ impl Picker {
             query: String::new(),
             focus_search: false,
             client_id: String::new(),
+            client_secret: String::new(),
             client_error: None,
         }
     }
+}
+
+/// A Google OAuth client secret (`GOCSPX-…`). Empty is not valid. The desktop dialog asks for one;
+/// the web sign-in does not use it.
+pub fn valid_client_secret(secret: &str) -> bool {
+    let secret = secret.trim();
+    (16..=128).contains(&secret.len()) && secret.bytes().all(|b| b.is_ascii_graphic())
 }
 
 /// A Google OAuth client id (`123-abc.apps.googleusercontent.com`). Anything else is refused
@@ -519,13 +537,22 @@ fn submit_client_id(app: &mut WordApp, picker: &mut Picker) {
         picker.client_error = Some("That doesn't look like a Google OAuth client ID.");
         return;
     }
+    let secret = picker.client_secret.trim().to_string();
+    // The browser build signs in without a secret. The desktop app's loopback flow needs the
+    // Desktop client's secret, and refuses a pasted value that is not one.
+    #[cfg(not(target_arch = "wasm32"))]
+    if !valid_client_secret(&secret) {
+        picker.client_error = Some("Paste the desktop client's secret too.");
+        return;
+    }
     picker.client_error = None;
     picker.client_id = id.clone();
+    picker.client_secret = secret.clone();
     let Some(start) = &app.services.open_drive else {
         picker.phase = Phase::Error("Open from Google Drive is available in the web app.".into());
         return;
     };
-    picker.rx = start(&id);
+    picker.rx = start(DriveLogin { client_id: id, client_secret: secret });
     picker.phase = Phase::Working(SIGNING_IN);
 }
 
@@ -566,14 +593,25 @@ fn picker_body(app: &mut WordApp, ui: &mut egui::Ui, picker: &mut Picker) -> boo
 }
 
 fn client_form(app: &mut WordApp, ui: &mut egui::Ui, picker: &mut Picker) -> bool {
+    #[cfg(target_arch = "wasm32")]
     ui.label(tl!(
         "This site has no Google client ID yet. Paste an OAuth client ID whose authorized origin is this page. It is saved in this browser only."
+    ));
+    #[cfg(not(target_arch = "wasm32"))]
+    ui.label(tl!(
+        "WordCraft will open your browser to sign in to Google Drive. Paste a Desktop OAuth client. It is saved in WordCraft's settings on this computer, not in the document."
     ));
     ui.add_space(8.0);
     ui.label(tl!("Google OAuth client ID"));
     ui.add(
         egui::TextEdit::singleline(&mut picker.client_id).desired_width(ui.available_width()).hint_text("1234567890-abc.apps.googleusercontent.com"),
     );
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        ui.add_space(6.0);
+        ui.label(tl!("Client secret"));
+        ui.add(egui::TextEdit::singleline(&mut picker.client_secret).password(true).desired_width(ui.available_width()).hint_text("GOCSPX-…"));
+    }
     if let Some(err) = picker.client_error {
         ui.label(tl!(err));
     }
@@ -829,6 +867,10 @@ mod tests {
     #[test]
     fn client_ids_urls_and_list_parsing_are_strict() {
         assert!(valid_client_id("1234567890-abc.apps.googleusercontent.com"));
+        assert!(valid_client_secret("GOCSPX-abcdefghijklmnopqrstuv"));
+        assert!(!valid_client_secret(""));
+        assert!(!valid_client_secret("short"));
+        assert!(!valid_client_secret("has a space in the secret"));
         assert!(!valid_client_id(""));
         assert!(!valid_client_id("javascript:alert(1)"));
         assert!(!valid_client_id("123-abc.apps.googleusercontent.com.evil.com"));
